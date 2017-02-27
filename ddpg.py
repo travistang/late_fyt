@@ -15,9 +15,17 @@ from ActorNetwork import ActorNetwork
 from CriticNetwork import CriticNetwork
 from OU import OU
 import timeit
-
+import tensorflow as tf
 import cv2
 OU = OU()       #Ornstein-Uhlenbeck Process
+tf.python.control_flow_ops = tf
+history = []
+def get_image(ob):
+    img = ob[-1]
+    vision = ob[-1]
+    img = np.array(vision).reshape(64,64,3)
+    img = cv2.cvtColor(np.flipud(img).astype(np.float32),cv2.COLOR_BGR2GRAY)/255.0
+    return img.reshape((64,64,1))
 
 def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
     BUFFER_SIZE = 100000
@@ -27,7 +35,7 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
     LRA = 0.0001    #Learning rate for Actor
     LRC = 0.001     #Lerning rate for Critic
 
-    action_dim = 3  #Steering/Acceleration/Brake
+    action_dim = 1  #Steering only!
     state_dim = 29  #of sensors input
 
     np.random.seed(1337)
@@ -48,6 +56,7 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
     config.gpu_options.allow_growth = True
     sess = tf.Session(config=config)
     from keras import backend as K
+    K.set_learning_phase(0)
     K.set_session(sess)
 
     actor = ActorNetwork(sess, state_dim, action_dim, BATCH_SIZE, TAU, LRA)
@@ -55,7 +64,7 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
     buff = ReplayBuffer(BUFFER_SIZE)    #Create replay buffer
 
     # Generate a Torcs environment
-    env = TorcsEnv(vision=vision, throttle=True,gear_change=False)
+    env = TorcsEnv(vision=vision, throttle=False,gear_change=False)
 
     #Now load the weight
     print("Now we load the weight")
@@ -70,7 +79,7 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
 
     print("TORCS Experiment Start.")
     for i in range(episode_count):
-
+        history = []
         print("Episode : " + str(i) + " Replay Buffer " + str(buff.count()))
 
         if np.mod(i, 3) == 0:
@@ -78,7 +87,8 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
         else:
             ob = env.reset()
 
-        s_t = np.hstack((ob.angle, ob.track, ob.trackPos, ob.speedX, ob.speedY,  ob.speedZ, ob.wheelSpinVel/100.0, ob.rpm))
+        s_t = get_image(ob)
+        [history.append(s_t) for i in range(4)] # populate the history
 
         total_reward = 0.
         for j in range(max_steps):
@@ -86,11 +96,12 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
             epsilon -= 1.0 / EXPLORE
             a_t = np.zeros([1,action_dim])
             noise_t = np.zeros([1,action_dim])
+            input = np.stack(s_t)
+            a_t_original = actor.model.predict(input.reshape((1,) + input.shape))
 
-            a_t_original = actor.model.predict(s_t.reshape(1, s_t.shape[0]))
             noise_t[0][0] = train_indicator * max(epsilon, 0) * OU.function(a_t_original[0][0],  0.0 , 0.60, 0.30)
-            noise_t[0][1] = train_indicator * max(epsilon, 0) * OU.function(a_t_original[0][1],  0.5 , 1.00, 0.10)
-            noise_t[0][2] = train_indicator * max(epsilon, 0) * OU.function(a_t_original[0][2], -0.1 , 1.00, 0.05)
+#            noise_t[0][1] = train_indicator * max(epsilon, 0) * OU.function(a_t_original[0][1],  0.5 , 1.00, 0.10)
+#            noise_t[0][2] = train_indicator * max(epsilon, 0) * OU.function(a_t_original[0][2], -0.1 , 1.00, 0.05)
 
             #The following code do the stochastic brake
             #if random.random() <= 0.1:
@@ -98,19 +109,14 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
             #    noise_t[0][2] = train_indicator * max(epsilon, 0) * OU.function(a_t_original[0][2],  0.2 , 1.00, 0.10)
 
             a_t[0][0] = a_t_original[0][0] + noise_t[0][0]
-            a_t[0][1] = a_t_original[0][1] + noise_t[0][1]
-            a_t[0][2] = a_t_original[0][2] + noise_t[0][2]
+#            a_t[0][1] = a_t_original[0][1] + noise_t[0][1]
+#            a_t[0][2] = a_t_original[0][2] + noise_t[0][2]
 
             ob, r_t, done, info = env.step(a_t[0])
 
             #img = np.ndarray((64,64,3))
-            vision = ob[-1]
-            img = np.array(vision).reshape(64,64,3)
-            img = cv2.cvtColor(np.flipud(img).astype(np.float32)/255.0,cv2.COLOR_BGR2RGB)
-            np.save('images/%05d.npy' % count,img)
-            count = count + 1
-            s_t1 = np.hstack((ob.angle, ob.track, ob.trackPos, ob.speedX, ob.speedY, ob.speedZ, ob.wheelSpinVel/100.0, ob.rpm))
-
+            s_t1 = get_image(ob)
+            print a_t,a_t.shape
             buff.add(s_t, a_t[0], r_t, s_t1, done)      #Add replay buffer
 
             #Do the batch update
@@ -130,7 +136,7 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
                 else:
                     y_t[k] = rewards[k] + GAMMA*target_q_values[k]
 
-            if (train_indicator):
+            if (train_indicator and len(history) >= 4):
                 loss += critic.model.train_on_batch([states,actions], y_t)
                 a_for_grad = actor.model.predict(states)
                 grads = critic.gradients(states, a_for_grad)

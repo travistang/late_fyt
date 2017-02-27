@@ -4,7 +4,7 @@ from keras.initializations import normal, identity
 from keras.models import model_from_json
 from keras.models import Sequential, Model
 from keras.engine.training import collect_trainable_weights
-from keras.layers import Dense, Flatten, Input, merge, Lambda
+from keras.layers import *
 from keras.optimizers import Adam
 import tensorflow as tf
 import keras.backend as K
@@ -22,8 +22,8 @@ class ActorNetwork(object):
         K.set_session(sess)
 
         #Now create the model
-        self.model , self.weights, self.state = self.create_actor_network(state_size, action_size)   
-        self.target_model, self.target_weights, self.target_state = self.create_actor_network(state_size, action_size) 
+        self.model , self.weights, self.state = self.create_actor_network(state_size, action_size)
+        self.target_model, self.target_weights, self.target_state = self.create_actor_network(state_size, action_size)
         self.action_gradient = tf.placeholder(tf.float32,[None, action_size])
         self.params_grad = tf.gradients(self.model.output, self.weights, -self.action_gradient)
         grads = zip(self.params_grad, self.weights)
@@ -45,13 +45,23 @@ class ActorNetwork(object):
 
     def create_actor_network(self, state_size,action_dim):
         print("Now we build the model")
-        S = Input(shape=[state_size])   
-        h0 = Dense(HIDDEN1_UNITS, activation='relu')(S)
-        h1 = Dense(HIDDEN2_UNITS, activation='relu')(h0)
-        Steering = Dense(1,activation='tanh',init=lambda shape, name: normal(shape, scale=1e-4, name=name))(h1)  
-        Acceleration = Dense(1,activation='sigmoid',init=lambda shape, name: normal(shape, scale=1e-4, name=name))(h1)   
-        Brake = Dense(1,activation='sigmoid',init=lambda shape, name: normal(shape, scale=1e-4, name=name))(h1) 
-        V = merge([Steering,Acceleration,Brake],mode='concat')          
-        model = Model(input=S,output=V)
-        return model, model.trainable_weights, S
+        S = Input(shape=(64,64,1))
+        conv1 = Convolution2D(32,8,8,subsample = (4,4),activation = 'relu',weights = [np.random.uniform(-1./64,1./64,size = (8,8,1,32)),np.random.uniform(1./64,2./64,size = (32,))])(S)
+        lrn1 = BatchNormalization()(conv1)
 
+        conv2 = Convolution2D(64,4,4,subsample = (2,2),activation = 'relu',weights = [np.random.uniform(-1./np.sqrt(32 * 8 * 8),1./np.sqrt(32 * 8 * 8),size = (4,4,32,64)),np.random.uniform(1./np.sqrt(32 * 8 * 8),2./np.sqrt(32 * 8 * 8)\
+            ,size = (64,))])(lrn1)
+        lrn2 = BatchNormalization()(conv2)
+
+        conv3 = Convolution2D(64,3,3,subsample = (1,1),weights = [np.random.uniform(-1./np.sqrt(64 * 4 * 4),1./np.sqrt(64 * 4 * 4),(3,3,64,64)),np.random.uniform(1./np.sqrt(64 * 4 * 4)\
+            ,2./np.sqrt(64 * 4 * 4),(64,))],activation = 'relu')(lrn2)
+        lrn3 = BatchNormalization()(conv3)
+
+        flat = Flatten()(lrn3)
+        drop = Dense(512,activation = 'relu',weights = [np.random.uniform(-1e-3,1e-3,(1024,512)),np.random.uniform(1e-3,2e-3,(512,))])(flat)
+        lrn4 = BatchNormalization()(drop)
+        Steering = Dense(1,activation = 'sigmoid',weights = [np.random.uniform(-1e-3,1e-3,(512,1)),np.zeros((1,))], name='Steering')(lrn4)
+        model = Model(S,Steering)
+        adam = Adam(lr=self.LEARNING_RATE)
+        model.compile(loss='mse', optimizer=adam)
+        return model, model.trainable_weights, S

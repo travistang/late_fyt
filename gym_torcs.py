@@ -13,7 +13,7 @@ import time
 class TorcsEnv:
     terminal_judge_start = 100  # If after 100 timestep still no progress, terminated
     termination_limit_progress = 5  # [km/h], episode terminates if car is running slower than this limit
-    default_speed = 50
+    default_speed = 70
 
     initial_reset = True
 
@@ -137,13 +137,14 @@ class TorcsEnv:
         damage = np.array(obs['damage'])
         rpm = np.array(obs['rpm'])
 
-        progress = sp*np.cos(obs['angle']) - np.abs(sp*np.sin(obs['angle'])) - sp * np.abs(obs['trackPos'])
+        progress = sp*np.cos(obs['angle']) - np.abs(sp*np.sin(obs['angle'])) - *sp * np.abs(obs['trackPos']) +  *(self.default_speed - obs['speedX']/self.default_speed)
         reward = progress
 
         # collision detection
+        '''
         if obs['damage'] - obs_pre['damage'] > 0:
             reward = -1
-
+        '''
         # Termination judgement #########################
         episode_terminate = False
         #if (abs(track.any()) > 1 or abs(trackPos) > 1):  # Episode is terminated if the car is out of track

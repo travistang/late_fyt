@@ -5,9 +5,11 @@ from keras.layers import *
 from keras.models import *
 import tensorflow as tf
 from ReplayBuffer import ReplayBuffer
+from collections import deque
+
 PI= 3.14159265359
 tf.python.control_flow_ops = tf
-
+seq_len = 4
 def extract_images(vision):
     img = np.ndarray((64,64,3))
     for i in range(3):
@@ -35,7 +37,7 @@ def get_network(seq_len = 4):
     net = Model(S,[a_out,q_lstm])
     return net
 
-net = get_network()
+net = get_network(seq_len)
 net.summary()
 
 env = TorcsEnv(vision = True,throttle = False, gear_change = False)
@@ -44,7 +46,7 @@ max_steps = 100000
 epsilon = 1
 EXPLORE = 100000.
 buff = ReplayBuffer(100000)
-
+history = History(seq_len)
 for epoch in range(2000):
     for i in range(max_steps):
         # retrieve state first
@@ -60,15 +62,16 @@ for epoch in range(2000):
             buff.add(s_t,act,reward,s_t1,done)
         # apply action
         env.step(np.array(action))
+        if i % seq_len == 0: # train when it is the multiple of `seq_len`
         # train on buffer
-        batch = buff.getBatch
-
+            batches = buff.getSequentialBatch(seq_len)
+            # evaluate y
+            # TODO: this
 
     # reduce frequency of exploration after each epoch
     if epsilon > 0:
         epsilon -= 1./EXPLORE
 
-        ##### Training:
 
     if np.mod(i, 3) == 0:
         ob = env.reset(relaunch=True)   #relaunch TORCS every 3 episode because of the memory leak error

@@ -17,7 +17,12 @@ class ReplayBuffer(object):
 
     def getSequentialBatch(self,seq_len,batch_size):
         if self.num_experiences < seq_len: return None
-        if 
+        if self.num_experiences < batch_size:
+            res = [self.buffer[i:i + seq_len] for i in xrange(self.num_experiences - 4)]
+            random.shuffle(res)
+            return res
+        return [self.buffer[i:i + seq_len] for i in sample(xrange(self.num_experiences - 4))]
+
     def size(self):
         return self.buffer_size
 
@@ -38,3 +43,16 @@ class ReplayBuffer(object):
     def erase(self):
         self.buffer = deque()
         self.num_experiences = 0
+'''
+class History(object):
+    def __init__ (self,hist_len):
+        self.hist_len = hist_len
+        self.history = deque()
+        self.num_history = 0
+    def add(s_t):
+        if self.num_history >= hist_len:
+            self.hitory.popleft()
+            self.history.append(s_t)
+    def get():
+        if self.history == 0
+'''
