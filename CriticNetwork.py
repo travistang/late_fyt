@@ -44,11 +44,11 @@ class CriticNetwork(object):
 
     def create_critic_network(self, state_size,action_dim):
         print("Now we build the model")
-        S = Input(shape=(64,64,1))
+        S = Input(shape=(64,64,4))
         A = Input(shape=(1,),name='action2')
         a_fc1 = Dense(512,activation = 'relu',weights = [np.random.uniform(-1e-4,1e-4,(1,512)),np.zeros((512,))])(A)
 
-        conv1 = Convolution2D(32,8,8,subsample = (4,4),activation = 'relu',weights = [np.random.uniform(-1./64,1./64,size = (8,8,1,32)),np.random.uniform(1./64,2./64,size = (32,))])(S)
+        conv1 = Convolution2D(32,8,8,subsample = (4,4),activation = 'relu',weights = [np.random.uniform(-1./64,1./64,size = (8,8,4,32)),np.random.uniform(1./64,2./64,size = (32,))])(S)
         lrn1 = BatchNormalization()(conv1)
 
         conv2 = Convolution2D(64,4,4,subsample = (2,2),activation = 'relu',weights = [np.random.uniform(-1./np.sqrt(32 * 8 * 8),1./np.sqrt(32 * 8 * 8),size = (4,4,32,64)),np.random.uniform(1./np.sqrt(32 * 8 * 8),2./np.sqrt(32 * 8 * 8)\
@@ -60,12 +60,12 @@ class CriticNetwork(object):
         lrn3 = BatchNormalization()(conv3)
 
         flat = Flatten()(lrn3)
-        drop = Dense(512,activation = 'relu',weights = [np.random.uniform(-1e-3,1e-3,(1024,512)),np.random.uniform(1e-3,2e-3,(512,))])(flat)
+        drop = Dense(512,activation = 'relu',weights = [np.random.uniform(-1e-4,1e-4,(1024,512)),np.zeros((512,))])(flat)
         drop_norm = BatchNormalization()(drop)
         V = Merge(mode = 'concat')([drop_norm,a_fc1])
         fc_1 = Dense(512,activation = 'relu',weights = [np.random.uniform(-1e-4,1e-4,(1024,512)),np.zeros((512,))])(V)
         fc_1_norm = BatchNormalization()(fc_1)
-        Q = Dense(1,weights = [np.random.uniform(-1e-4,1e-4,(512,1)),np.zeros((1,))])(fc_1_norm)
+        Q = Dense(1,,W_regularizer = l2(0.01),activity_regularier = activity_l2(0.001),weights = [np.random.uniform(-1e-5,1e-5,(512,1)),np.zeros((1,))])(fc_1_norm)
         model = Model(input=[S,A],output=Q)
         adam = Adam(lr=self.LEARNING_RATE)
         model.compile(loss='mse', optimizer=adam)

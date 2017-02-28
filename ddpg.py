@@ -25,15 +25,16 @@ def get_image(ob):
     vision = ob[-1]
     img = np.array(vision).reshape(64,64,3)
     img = cv2.cvtColor(np.flipud(img).astype(np.float32),cv2.COLOR_BGR2GRAY)/255.0
-    return img.reshape((64,64,1))
+    #return img.reshape((64,64,1))
+    return img
 
 def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
     BUFFER_SIZE = 100000
     BATCH_SIZE = 32
     GAMMA = 0.99
-    TAU = 0.001     #Target Network HyperParameters
-    LRA = 0.0001    #Learning rate for Actor
-    LRC = 0.001     #Lerning rate for Critic
+    TAU = 0.1     #Target Network HyperParameters
+    LRA = 0.00001    #Learning rate for Actor
+    LRC = 0.0001     #Lerning rate for Critic
 
     action_dim = 1  #Steering only!
     state_dim = 29  #of sensors input
@@ -87,8 +88,9 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
         else:
             ob = env.reset()
 
-        s_t = get_image(ob)
-        [history.append(s_t) for i in range(4)] # populate the history
+        img = get_image(ob)
+        [history.append(img) for i in range(4)] # populate the history
+        s_t = np.stack(history,axis = -1)
 
         total_reward = 0.
         for j in range(max_steps):
@@ -96,8 +98,7 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
             epsilon -= 1.0 / EXPLORE
             a_t = np.zeros([1,action_dim])
             noise_t = np.zeros([1,action_dim])
-            input = np.stack(s_t)
-            a_t_original = actor.model.predict(input.reshape((1,) + input.shape))
+            a_t_original = actor.model.predict(s_t.reshape((1,) + s_t.shape))
 
             noise_t[0][0] = train_indicator * max(epsilon, 0) * OU.function(a_t_original[0][0],  0.0 , 0.60, 0.30)
 #            noise_t[0][1] = train_indicator * max(epsilon, 0) * OU.function(a_t_original[0][1],  0.5 , 1.00, 0.10)
@@ -115,8 +116,12 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
             ob, r_t, done, info = env.step(a_t[0])
 
             #img = np.ndarray((64,64,3))
-            s_t1 = get_image(ob)
-            print a_t,a_t.shape
+            img = get_image(ob)
+
+            history.append(img)
+            history = history[1:]
+            s_t1 = np.stack(history,axis = -1)
+
             buff.add(s_t, a_t[0], r_t, s_t1, done)      #Add replay buffer
 
             #Do the batch update

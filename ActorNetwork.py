@@ -4,6 +4,7 @@ from keras.initializations import normal, identity
 from keras.models import model_from_json
 from keras.models import Sequential, Model
 from keras.engine.training import collect_trainable_weights
+from keras.regularizers import *
 from keras.layers import *
 from keras.optimizers import Adam
 import tensorflow as tf
@@ -45,8 +46,8 @@ class ActorNetwork(object):
 
     def create_actor_network(self, state_size,action_dim):
         print("Now we build the model")
-        S = Input(shape=(64,64,1))
-        conv1 = Convolution2D(32,8,8,subsample = (4,4),activation = 'relu',weights = [np.random.uniform(-1./64,1./64,size = (8,8,1,32)),np.random.uniform(1./64,2./64,size = (32,))])(S)
+        S = Input(shape=(64,64,4))
+        conv1 = Convolution2D(32,8,8,subsample = (4,4),activation = 'relu',weights = [np.random.uniform(-1./64,1./64,size = (8,8,4,32)),np.random.uniform(1./64,2./64,size = (32,))])(S)
         lrn1 = BatchNormalization()(conv1)
 
         conv2 = Convolution2D(64,4,4,subsample = (2,2),activation = 'relu',weights = [np.random.uniform(-1./np.sqrt(32 * 8 * 8),1./np.sqrt(32 * 8 * 8),size = (4,4,32,64)),np.random.uniform(1./np.sqrt(32 * 8 * 8),2./np.sqrt(32 * 8 * 8)\
@@ -60,7 +61,7 @@ class ActorNetwork(object):
         flat = Flatten()(lrn3)
         drop = Dense(512,activation = 'relu',weights = [np.random.uniform(-1e-3,1e-3,(1024,512)),np.random.uniform(1e-3,2e-3,(512,))])(flat)
         lrn4 = BatchNormalization()(drop)
-        Steering = Dense(1,activation = 'sigmoid',weights = [np.random.uniform(-1e-3,1e-3,(512,1)),np.zeros((1,))], name='Steering')(lrn4)
+        Steering = Dense(1,W_regularizer = l2(0.01),activity_regularier = activity_l2(0.001),weights = [np.random.uniform(-1e-7,1e-7,(512,1)),np.zeros((1,))], name='Steering')(lrn4)
         model = Model(S,Steering)
         adam = Adam(lr=self.LEARNING_RATE)
         model.compile(loss='mse', optimizer=adam)

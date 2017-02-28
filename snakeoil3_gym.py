@@ -127,7 +127,7 @@ class Client(object):
         self.sid= u'SCR'
         self.maxEpisodes=1 # "Maximum number of learning episodes to perform"
         self.trackname= u'unknown'
-        self.stage= 3 # 0=Warm-up, 1=Qualifying 2=Race, 3=unknown <Default=3>
+        self.stage= 0 # 0=Warm-up, 1=Qualifying 2=Race, 3=unknown <Default=3>
         self.debug= False
         self.maxSteps= 100000  # 50steps/second
         self.parse_the_command_line()
