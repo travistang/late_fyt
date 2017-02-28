@@ -6,6 +6,7 @@ from keras.engine.training import collect_trainable_weights
 
 from keras.layers import *
 from keras.models import *
+from keras.regularizers import *
 from keras.optimizers import Adam
 import keras.backend as K
 import tensorflow as tf
@@ -65,7 +66,7 @@ class CriticNetwork(object):
         V = Merge(mode = 'concat')([drop_norm,a_fc1])
         fc_1 = Dense(512,activation = 'relu',weights = [np.random.uniform(-1e-4,1e-4,(1024,512)),np.zeros((512,))])(V)
         fc_1_norm = BatchNormalization()(fc_1)
-        Q = Dense(1,,W_regularizer = l2(0.01),activity_regularier = activity_l2(0.001),weights = [np.random.uniform(-1e-5,1e-5,(512,1)),np.zeros((1,))])(fc_1_norm)
+        Q = Dense(1,weights = [np.random.uniform(-1e-5,1e-5,(512,1)),np.zeros((1,))])(fc_1_norm)
         model = Model(input=[S,A],output=Q)
         adam = Adam(lr=self.LEARNING_RATE)
         model.compile(loss='mse', optimizer=adam)
