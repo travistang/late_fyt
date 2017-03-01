@@ -137,8 +137,8 @@ class TorcsEnv:
         damage = np.array(obs['damage'])
         rpm = np.array(obs['rpm'])
 
-        #progress = sp*np.cos(obs['angle']) - np.abs(sp*np.sin(obs['angle'])) - *sp * np.abs(obs['trackPos']) +  *(self.default_speed - obs['speedX']/self.default_speed)
-        progress = -4./( 1 + np.exp(-(obs['trackPos']** 2))) + 3
+        progress = sp*np.cos(obs['angle']) - np.abs(sp*np.sin(obs['angle'])) - sp * np.abs(obs['trackPos']) 
+        #progress = -4./( 1 + np.exp(-(obs['trackPos']** 2))) + 3
         reward = progress
 
         # collision detection

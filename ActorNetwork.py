@@ -61,7 +61,7 @@ class ActorNetwork(object):
         flat = Flatten()(lrn3)
         drop = Dense(512,activation = 'relu',weights = [np.random.uniform(-1e-3,1e-3,(1024,512)),np.random.uniform(1e-3,2e-3,(512,))])(flat)
         lrn4 = BatchNormalization()(drop)
-        Steering = Dense(1,weights = [np.random.uniform(-1e-7,1e-7,(512,1)),np.zeros((1,))], name='Steering')(lrn4)
+        Steering = Dense(1,weights = [np.random.uniform(0,0,(512,1)),np.zeros((1,))], name='Steering')(lrn4)
         model = Model(S,Steering)
         adam = Adam(lr=self.LEARNING_RATE)
         model.compile(loss='mse', optimizer=adam)

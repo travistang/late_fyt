@@ -66,7 +66,7 @@ class CriticNetwork(object):
         V = Merge(mode = 'concat')([drop_norm,a_fc1])
         fc_1 = Dense(512,activation = 'relu',weights = [np.random.uniform(-1e-4,1e-4,(1024,512)),np.zeros((512,))])(V)
         fc_1_norm = BatchNormalization()(fc_1)
-        Q = Dense(1,weights = [np.random.uniform(-1e-5,1e-5,(512,1)),np.zeros((1,))])(fc_1_norm)
+        Q = Dense(1,weights = [np.random.uniform(-1e-4,1e-4,(512,1)),np.zeros((1,))])(fc_1_norm)
         model = Model(input=[S,A],output=Q)
         adam = Adam(lr=self.LEARNING_RATE)
         model.compile(loss='mse', optimizer=adam)

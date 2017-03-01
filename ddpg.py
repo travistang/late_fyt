@@ -17,9 +17,9 @@ from OU import OU
 import timeit
 import tensorflow as tf
 import cv2
+import matplotlib.pyplot as plt
 OU = OU()       #Ornstein-Uhlenbeck Process
 tf.python.control_flow_ops = tf
-history = []
 def get_image(ob):
     img = ob[-1]
     vision = ob[-1]
@@ -32,8 +32,8 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
     BUFFER_SIZE = 100000
     BATCH_SIZE = 32
     GAMMA = 0.99
-    TAU = 0.1     #Target Network HyperParameters
-    LRA = 0.00001    #Learning rate for Actor
+    TAU = 0.001     #Target Network HyperParameters
+    LRA = 0.001    #Learning rate for Actor
     LRC = 0.0001     #Lerning rate for Critic
 
     action_dim = 1  #Steering only!
@@ -79,7 +79,38 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
         print("Cannot find the weight")
 
     print("TORCS Experiment Start.")
+    # random search to populate buffer
+    ob = env.reset()
+    #from encoder import get_encoder
+    #encoder = get_encoder()
+    history = []
+    img_history = []
+    qs = []
+    plot, = plt.plot(qs)
+    plt.ion()
+    plt.show()
+    for i in range(100):
+        print "Gathering %d/1000 sample..." % i
+        act = np.random.normal(0,0.7,(1,))
+        ob,r,done,_ = env.step(act)
+        img = get_image(ob)
+        img_history.append(img)
+        history.append(img)
+        if len(history) > 4:
+            s_t = np.stack(history[0:4],axis = -1)
+            s_t1 = np.stack(history[1:],axis = -1)
+            history = history[1:]
+            buff.add(s_t,act,r,s_t,done)
+        if done:
+            ob = env.reset()
+            history = []
+    # train encoder and save the weights
+    #encoder.compile(optimizer = 'adam',nb_epoch = 20,batch_size = 16)
     for i in range(episode_count):
+        qs = []
+        plot.set_xdata(range(len(qs)))
+        plot.set_ydata(qs)
+        plt.draw()
         history = []
         print("Episode : " + str(i) + " Replay Buffer " + str(buff.count()))
 
@@ -89,7 +120,7 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
             ob = env.reset()
 
         img = get_image(ob)
-        [history.append(img) for i in range(4)] # populate the history
+        [history.append(img) for k in range(4)] # populate the history
         s_t = np.stack(history,axis = -1)
 
         total_reward = 0.
@@ -134,7 +165,7 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
             y_t = np.asarray([e[1] for e in batch])
 
             target_q_values = critic.target_model.predict([new_states, actor.target_model.predict(new_states)])
-
+            qs.append(target_q_values[0])
             for k in range(len(batch)):
                 if dones[k]:
                     y_t[k] = rewards[k]
@@ -156,6 +187,7 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
 
             step += 1
             if done:
+                history = []
                 break
 
         if np.mod(i, 3) == 0:
