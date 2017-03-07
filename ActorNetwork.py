@@ -6,9 +6,10 @@ from keras.models import Sequential, Model
 from keras.engine.training import collect_trainable_weights
 from keras.regularizers import *
 from keras.layers import *
-from keras.optimizers import Adam
+from keras.optimizers import Adam,RMSprop
 import tensorflow as tf
 import keras.backend as K
+from encoder import get_pretrained_encoder
 
 HIDDEN1_UNITS = 300
 HIDDEN2_UNITS = 600
@@ -36,7 +37,15 @@ class ActorNetwork(object):
             self.state: states,
             self.action_gradient: action_grads
         })
+    def get_weight_norm(self):
+        layer_with_weights = filter(lambda l: len(l.get_weights()) == 2,self.model.layers)
+        weights = map(lambda l: l.get_weights()[0],layer_with_weights)
+        return map(lambda w: np.linalg.norm(w),weights)
 
+    def get_bias_norm(self):
+        layer_with_weights = filter(lambda l: len(l.get_weights()) == 2,self.model.layers)
+        weights = map(lambda l: l.get_weights()[1],layer_with_weights)
+        return map(lambda w: np.linalg.norm(w),weights)
     def target_train(self):
         actor_weights = self.model.get_weights()
         actor_target_weights = self.target_model.get_weights()
@@ -46,8 +55,10 @@ class ActorNetwork(object):
 
     def create_actor_network(self, state_size,action_dim):
         print("Now we build the model")
+        '''
         S = Input(shape=(64,64,4))
-        conv1 = Convolution2D(32,8,8,subsample = (4,4),activation = 'relu',weights = [np.random.uniform(-1./64,1./64,size = (8,8,4,32)),np.random.uniform(1./64,2./64,size = (32,))])(S)
+        lrn0 = BatchNormalization()(S)
+        conv1 = Convolution2D(32,8,8,subsample = (4,4),activation = 'relu',weights = [np.random.uniform(-1./256,1./256,size = (8,8,4,32)),np.random.uniform(1./256,2./256,size = (32,))])(lrn0)
         lrn1 = BatchNormalization()(conv1)
 
         conv2 = Convolution2D(64,4,4,subsample = (2,2),activation = 'relu',weights = [np.random.uniform(-1./np.sqrt(32 * 8 * 8),1./np.sqrt(32 * 8 * 8),size = (4,4,32,64)),np.random.uniform(1./np.sqrt(32 * 8 * 8),2./np.sqrt(32 * 8 * 8)\
@@ -61,8 +72,12 @@ class ActorNetwork(object):
         flat = Flatten()(lrn3)
         drop = Dense(512,activation = 'relu',weights = [np.random.uniform(-1e-3,1e-3,(1024,512)),np.random.uniform(1e-3,2e-3,(512,))])(flat)
         lrn4 = BatchNormalization()(drop)
-        Steering = Dense(1,weights = [np.random.uniform(0,0,(512,1)),np.zeros((1,))], name='Steering')(lrn4)
+        '''
+        encoder,S,lrn4 = get_pretrained_encoder()
+        Steering = GRU(1,consume_less = 'gpu')(lrn4)
+        #Steering = Dense(1,weights = [np.random.uniform(-1e-8,1e-8,(512,1)),np.zeros((1,))], name='Steering')(lrn4)
         model = Model(S,Steering)
         adam = Adam(lr=self.LEARNING_RATE)
-        model.compile(loss='mse', optimizer=adam)
+        rmsprop = RMSprop(lr = self.LEARNING_RATE)
+        model.compile(loss='mse', optimizer=rmsprop)
         return model, model.trainable_weights, S

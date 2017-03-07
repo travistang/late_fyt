@@ -7,10 +7,10 @@ from keras.engine.training import collect_trainable_weights
 from keras.layers import *
 from keras.models import *
 from keras.regularizers import *
-from keras.optimizers import Adam
+from keras.optimizers import Adam,RMSprop
 import keras.backend as K
 import tensorflow as tf
-
+from encoder import get_pretrained_encoder
 HIDDEN1_UNITS = 300
 HIDDEN2_UNITS = 600
 
@@ -36,6 +36,15 @@ class CriticNetwork(object):
             self.action: actions
         })[0]
 
+    def get_weight_norm(self):
+        layer_with_weights = filter(lambda l: len(l.get_weights()) == 2,self.model.layers)
+        weights = map(lambda l: l.get_weights()[0],layer_with_weights)
+        return map(lambda w: np.linalg.norm(w),weights)
+
+    def get_bias_norm(self):
+        layer_with_weights = filter(lambda l: len(l.get_weights()) == 2,self.model.layers)
+        weights = map(lambda l: l.get_weights()[1],layer_with_weights)
+        return map(lambda w: np.linalg.norm(w),weights)
     def target_train(self):
         critic_weights = self.model.get_weights()
         critic_target_weights = self.target_model.get_weights()
@@ -45,11 +54,14 @@ class CriticNetwork(object):
 
     def create_critic_network(self, state_size,action_dim):
         print("Now we build the model")
+        A = Input(shape=(1,1),name='action2')
+        '''
         S = Input(shape=(64,64,4))
-        A = Input(shape=(1,),name='action2')
-        a_fc1 = Dense(512,activation = 'relu',weights = [np.random.uniform(-1e-4,1e-4,(1,512)),np.zeros((512,))])(A)
+        lrn0 = BatchNormalization()(S)
 
-        conv1 = Convolution2D(32,8,8,subsample = (4,4),activation = 'relu',weights = [np.random.uniform(-1./64,1./64,size = (8,8,4,32)),np.random.uniform(1./64,2./64,size = (32,))])(S)
+        a_fc1 = Dense(512,activation = 'relu',weights = [np.random.uniform(-1e-4,1e-4,(1,512)),np.zeros((512,))])(A)
+        a_lrn1 = BatchNormalization()(a_fc1)
+        conv1 = Convolution2D(32,8,8,subsample = (4,4),activation = 'relu',weights = [np.random.uniform(-1./256,1./256,size = (8,8,4,32)),np.random.uniform(1./256,2./256,size = (32,))])(lrn0)
         lrn1 = BatchNormalization()(conv1)
 
         conv2 = Convolution2D(64,4,4,subsample = (2,2),activation = 'relu',weights = [np.random.uniform(-1./np.sqrt(32 * 8 * 8),1./np.sqrt(32 * 8 * 8),size = (4,4,32,64)),np.random.uniform(1./np.sqrt(32 * 8 * 8),2./np.sqrt(32 * 8 * 8)\
@@ -62,12 +74,16 @@ class CriticNetwork(object):
 
         flat = Flatten()(lrn3)
         drop = Dense(512,activation = 'relu',weights = [np.random.uniform(-1e-4,1e-4,(1024,512)),np.zeros((512,))])(flat)
-        drop_norm = BatchNormalization()(drop)
-        V = Merge(mode = 'concat')([drop_norm,a_fc1])
-        fc_1 = Dense(512,activation = 'relu',weights = [np.random.uniform(-1e-4,1e-4,(1024,512)),np.zeros((512,))])(V)
-        fc_1_norm = BatchNormalization()(fc_1)
-        Q = Dense(1,weights = [np.random.uniform(-1e-4,1e-4,(512,1)),np.zeros((1,))])(fc_1_norm)
+        '''
+        encoder,S,lrn4 = get_pretrained_encoder()
+
+        #V = Merge(mode = 'concat')([lrn4,A])
+        high1 = GRU(1,return_sequences = True,consume_less = 'gpu')(lrn4)
+        V = Merge(mode = 'concat',concat_axis = 1)([A,high1])
+        Q = GRU(1,consume_less = 'gpu')(V)
+        #Q = Dense(1,weights = [np.random.uniform(-1e-8,1e-8,(513,1)),np.zeros((1,))])(V)
         model = Model(input=[S,A],output=Q)
         adam = Adam(lr=self.LEARNING_RATE)
-        model.compile(loss='mse', optimizer=adam)
+        rmsprop = RMSprop(lr = self.LEARNING_RATE)
+        model.compile(loss='mse', optimizer=rmsprop)
         return model, A, S

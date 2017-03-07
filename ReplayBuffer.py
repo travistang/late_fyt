@@ -1,6 +1,6 @@
 from collections import deque
 import random
-
+from heapq import *
 class ReplayBuffer(object):
 
     def __init__(self, buffer_size):
@@ -15,6 +15,11 @@ class ReplayBuffer(object):
         else:
             return random.sample(self.buffer, batch_size)
 
+    def getBatchGreedy(self,batch_size):
+        if self.num_experiences < batch_size:
+            return random.sample(self.buffer,self.num_experiences)
+        else:
+            return sorted(self.buffer,key = lambda e: e[2],reverse = False)[:batch_size] # sort by reward
     def getSequentialBatch(self,seq_len,batch_size):
         if self.num_experiences < seq_len: return None
         if self.num_experiences < batch_size:

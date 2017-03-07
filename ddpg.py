@@ -5,7 +5,7 @@ import argparse
 from keras.models import model_from_json, Model
 from keras.models import Sequential
 from keras.layers.core import Dense, Dropout, Activation, Flatten
-from keras.optimizers import Adam
+from keras.optimizers import Adam,RMSprop
 import tensorflow as tf
 from keras.engine.training import collect_trainable_weights
 import json
@@ -20,21 +20,23 @@ import cv2
 import matplotlib.pyplot as plt
 OU = OU()       #Ornstein-Uhlenbeck Process
 tf.python.control_flow_ops = tf
+plt.ion()
+colors = [np.random.uniform(0,1,(1,3)) for i in range(20)]
 def get_image(ob):
     img = ob[-1]
     vision = ob[-1]
     img = np.array(vision).reshape(64,64,3)
     img = cv2.cvtColor(np.flipud(img).astype(np.float32),cv2.COLOR_BGR2GRAY)/255.0
-    #return img.reshape((64,64,1))
-    return img
+    return img.reshape((64,64,1))
+    #return img
 
 def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
     BUFFER_SIZE = 100000
     BATCH_SIZE = 32
     GAMMA = 0.99
-    TAU = 0.001     #Target Network HyperParameters
-    LRA = 0.001    #Learning rate for Actor
-    LRC = 0.0001     #Lerning rate for Critic
+    TAU = 0.1     #Target Network HyperParameters
+    LRA = 0.00001    #Learning rate for Actor
+    LRC = 0.00000001     #Lerning rate for Critic
 
     action_dim = 1  #Steering only!
     state_dim = 29  #of sensors input
@@ -86,19 +88,19 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
     history = []
     img_history = []
     qs = []
-    plot, = plt.plot(qs)
-    plt.ion()
-    plt.show()
-    for i in range(100):
-        print "Gathering %d/1000 sample..." % i
+    sample_size = 40
+    for i in range(sample_size):
+        print "Gathering %d/%d sample..." % (i,sample_size)
         act = np.random.normal(0,0.7,(1,))
         ob,r,done,_ = env.step(act)
         img = get_image(ob)
+        np.save('%d.npy' % i, img)
         img_history.append(img)
         history.append(img)
+        # stack histories to form states
         if len(history) > 4:
-            s_t = np.stack(history[0:4],axis = -1)
-            s_t1 = np.stack(history[1:],axis = -1)
+            s_t = np.stack(history[0:4])
+            s_t1 = np.stack(history[1:])
             history = history[1:]
             buff.add(s_t,act,r,s_t,done)
         if done:
@@ -108,9 +110,11 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
     #encoder.compile(optimizer = 'adam',nb_epoch = 20,batch_size = 16)
     for i in range(episode_count):
         qs = []
+        '''
         plot.set_xdata(range(len(qs)))
-        plot.set_ydata(qs)
-        plt.draw()
+                plot.set_ydata(qs)
+                plt.draw()
+        '''
         history = []
         print("Episode : " + str(i) + " Replay Buffer " + str(buff.count()))
 
@@ -121,8 +125,8 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
 
         img = get_image(ob)
         [history.append(img) for k in range(4)] # populate the history
-        s_t = np.stack(history,axis = -1)
-
+        #s_t = np.stack(history,axis = -1)
+        s_t = np.stack(history)
         total_reward = 0.
         for j in range(max_steps):
             loss = 0
@@ -130,7 +134,13 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
             a_t = np.zeros([1,action_dim])
             noise_t = np.zeros([1,action_dim])
             a_t_original = actor.model.predict(s_t.reshape((1,) + s_t.shape))
-
+            # plotting stuff:
+            '''
+            for ind,norm in enumerate(actor.get_bias_norm()):
+                plt.scatter(count,norm,c = colors[ind])
+            '''
+            count = count + 1
+            #plt.pause(0.005)
             noise_t[0][0] = train_indicator * max(epsilon, 0) * OU.function(a_t_original[0][0],  0.0 , 0.60, 0.30)
 #            noise_t[0][1] = train_indicator * max(epsilon, 0) * OU.function(a_t_original[0][1],  0.5 , 1.00, 0.10)
 #            noise_t[0][2] = train_indicator * max(epsilon, 0) * OU.function(a_t_original[0][2], -0.1 , 1.00, 0.05)
@@ -139,7 +149,7 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
             #if random.random() <= 0.1:
             #    print("********Now we apply the brake***********")
             #    noise_t[0][2] = train_indicator * max(epsilon, 0) * OU.function(a_t_original[0][2],  0.2 , 1.00, 0.10)
-
+            # TODO: what if we sample actions randomly?
             a_t[0][0] = a_t_original[0][0] + noise_t[0][0]
 #            a_t[0][1] = a_t_original[0][1] + noise_t[0][1]
 #            a_t[0][2] = a_t_original[0][2] + noise_t[0][2]
@@ -148,15 +158,15 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
 
             #img = np.ndarray((64,64,3))
             img = get_image(ob)
-
             history.append(img)
             history = history[1:]
-            s_t1 = np.stack(history,axis = -1)
-
-            buff.add(s_t, a_t[0], r_t, s_t1, done)      #Add replay buffer
-
+            #s_t1 = np.stack(history,axis = -1)
+            s_t1 = np.stack(history)
+            np.save("%d.npy" % count, img)
+            #buff.add(s_t, a_t[0], r_t, s_t1, done)      #Add replay buffer
+            buff.add(s_t,a_t,r_t,s_t1,done)
             #Do the batch update
-            batch = buff.getBatch(BATCH_SIZE)
+            batch = buff.getBatchGreedy(BATCH_SIZE)
             states = np.asarray([e[0] for e in batch])
             actions = np.asarray([e[1] for e in batch])
             rewards = np.asarray([e[2] for e in batch])
