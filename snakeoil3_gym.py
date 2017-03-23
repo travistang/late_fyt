@@ -129,7 +129,7 @@ class Client(object):
         self.trackname= u'unknown'
         self.stage= 0 # 0=Warm-up, 1=Qualifying 2=Race, 3=unknown <Default=3>
         self.debug= False
-        self.maxSteps= 100000  # 50steps/second
+        self.maxSteps= 10000000  # 50steps/second
         self.parse_the_command_line()
         if H: self.host= H
         if p: self.port= p
@@ -538,7 +538,6 @@ def drive_example(c):
     R[u'steer']= S[u'angle']*10 / PI
     # Steer To Center
     R[u'steer']-= S[u'trackPos']*.10
-
     # Throttle Control
     if S[u'speedX'] < target_speed - (R[u'steer']*50):
         R[u'accel']+= .01
@@ -565,7 +564,6 @@ def drive_example(c):
     if S[u'speedX']>170:
         R[u'gear']=6
     return
-
 # ================ MAIN ================
 if __name__ == u"__main__":
     C= Client(p=3101)

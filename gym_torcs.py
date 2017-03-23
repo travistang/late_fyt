@@ -11,9 +11,9 @@ import time
 
 
 class TorcsEnv:
-    terminal_judge_start = 100  # If after 100 timestep still no progress, terminated
-    termination_limit_progress = 5  # [km/h], episode terminates if car is running slower than this limit
-    default_speed = 70
+    terminal_judge_start = 200  # If after 100 timestep still no progress, terminated
+    termination_limit_progress = 0.5  # [km/h], episode terminates if car is running slower than this limit
+    default_speed = 30
 
     initial_reset = True
 
@@ -26,7 +26,7 @@ class TorcsEnv:
         self.gear_change = gear_change
 
         self.initial_run = True
-
+        self.last_nonmove_step = None
         ##print("launch torcs")
         os.system('pkill torcs')
         time.sleep(0.5)
@@ -137,28 +137,33 @@ class TorcsEnv:
         damage = np.array(obs['damage'])
         rpm = np.array(obs['rpm'])
 
-        progress = sp*np.cos(obs['angle']) - np.abs(sp*np.sin(obs['angle'])) - sp * np.abs(obs['trackPos']) 
+        progress = np.exp(-10 * obs['trackPos'] ** 2)
+        #progress = sp*np.cos(obs['angle']) - np.abs(sp*np.sin(obs['angle'])) - sp * np.abs(obs['trackPos'])
         #progress = -4./( 1 + np.exp(-(obs['trackPos']** 2))) + 3
         reward = progress
 
         # collision detection
-        '''
+
         if obs['damage'] - obs_pre['damage'] > 0:
             reward = -1
-        '''
+            episode_terminate = True
+            client.R.d['meta'] = True            
+
         # Termination judgement #########################
         episode_terminate = False
-        #if (abs(track.any()) > 1 or abs(trackPos) > 1):  # Episode is terminated if the car is out of track
-        #    reward = -200
-        #    episode_terminate = True
-        #    client.R.d['meta'] = True
-
+        '''
+        if (abs(track.any()) > 1 or abs(trackPos) > 1):  # Episode is terminated if the car is out of track
+            reward = -200
+            episode_terminate = True
+            client.R.d['meta'] = True
+        '''
+        '''
         if self.terminal_judge_start < self.time_step: # Episode terminates if the progress of agent is small
             if progress < self.termination_limit_progress:
                 print("No progress")
                 episode_terminate = True
                 client.R.d['meta'] = True
-
+        '''
         if np.cos(obs['angle']) < 0: # Episode is terminated if the agent runs backward
             episode_terminate = True
             client.R.d['meta'] = True
@@ -284,3 +289,33 @@ class TorcsEnv:
                                trackPos=np.array(raw_obs['trackPos'], dtype=np.float32)/1.,
                                wheelSpinVel=np.array(raw_obs['wheelSpinVel'], dtype=np.float32),
                                img=image_rgb)
+
+if __name__ == '__main__':
+    env = TorcsEnv(vision = True)
+    ob = env.reset()
+    from ddpg import get_image
+    img = get_image(ob)
+    history = [img for i in range(4)]
+    max_step = 80000
+    count = 0
+    for e in range(2000):
+        for i in range(max_step):
+            c = env.get_client()
+            S = c.S.d
+            a_t = ob[4] * 1.22
+            a_t -= ob[8] *.09
+            if np.random.randint(4) == 2: # 1/4 of chance to add some noise
+                a_t += np.random.normal(0,0.3)
+
+            ls = np.hstack((ob.angle,ob.track,ob.trackPos,ob.speedX,ob.speedY,ob.speedZ,ob.wheelSpinVel/100.0,ob.rpm))
+            np.save('training/ls-%d.npy' % count,ls)
+            np.save('training/s-%d.npy' % count,history)
+            a_t = np.array(a_t).reshape(1,1)
+            np.save('training/a-%d.npy' % count,a_t)
+            ob,reward, done,_ = env.step(a_t)
+            history.append(get_image(ob))
+            history = history[1:]
+            print("Step",i,"act",a_t)
+            count = count + 1
+            if done:
+                env.reset()

@@ -47,28 +47,57 @@ def train_encoder(net):
     net.fit(X,X,nb_epoch = 50,batch_size = 16,validation_split = 0.2,callbacks = [EarlyStopping(patience = 1)])
     net.save('encoder.h5')
 
-
+'''
 def get_pretrained_encoder():
     trained = load_model('encoder.h5')
-    S = Input(shape=(4,64,64,1))
-    conv1 = TimeDistributed(Convolution2D(32,8,8,subsample = (4,4),activation = 'relu',weights = trained.layers[1].get_weights()))(S)
-    lrn1 = TimeDistributed(BatchNormalization(weights = trained.layers[2].get_weights()))(conv1)
+    S = Input(shape=(4,64,64,3))
+    conv1 = TimeDistributed(Convolution2D(16,8,8,subsample = (4,4),init = 'uniform',activation = 'relu'))(S)
+    lrn1 = TimeDistributed(BatchNormalization())(conv1)
 
-    conv2 = TimeDistributed(Convolution2D(64,4,4,subsample = (2,2),activation = 'relu',weights = trained.layers[3].get_weights()))(lrn1)
-    lrn2 = TimeDistributed(BatchNormalization(weights = trained.layers[4].get_weights()))(conv2)
+    conv2 = TimeDistributed(Convolution2D(32,4,4,subsample = (2,2),init = 'uniform',activation = 'relu'))(lrn1)
+    lrn2 = TimeDistributed(BatchNormalization())(conv2)
 
-    conv3 = TimeDistributed(Convolution2D(64,3,3,subsample = (1,1),weights = trained.layers[5].get_weights(),activation = 'relu'))(lrn2)
-    lrn3 = TimeDistributed(BatchNormalization(weights = trained.layers[6].get_weights()))(conv3)
+    conv3 = TimeDistributed(Convolution2D(32,3,3,subsample = (1,1),init = 'uniform',activation = 'relu'))(lrn2)
+    lrn3 = TimeDistributed(BatchNormalization())(conv3)
 
     flat = TimeDistributed(Flatten())(lrn3)
-    drop = TimeDistributed(Dense(512,activation = 'relu',weights = trained.layers[8].get_weights()))(flat)
-    lrn4 = TimeDistributed(BatchNormalization(weights = trained.layers[9].get_weights()))(drop)
+    drop = TimeDistributed(Dense(128,init = 'uniform',activation = 'relu'))(flat)
+    lrn4 = TimeDistributed(BatchNormalization())(drop)
 
     model = Model(S,lrn4)
-    for i,l in enumerate(model.layers):
-        l.set_weights(trained.layers[i].get_weights())
-        l.trainable = False # freeze train layers
+    #for i,l in enumerate(model.layers):
+    #    l.set_weights(trained.layers[i].get_weights())
+    #   l.trainable = False # freeze train layers
     return model,S,lrn4
+'''
+
+def get_pretrained_encoder():
+    S = Input(shape = (4,64,64,3))
+    x = TimeDistributed(Convolution2D(32,5,5,subsample = (1,1),init = 'uniform',activation = 'relu'))(S)
+    x = TimeDistributed(BatchNormalization())(x)
+
+
+    x = TimeDistributed(Convolution2D(64,5,5,subsample = (1,1),init = 'uniform',activation = 'relu'))(x)
+    x = TimeDistributed(BatchNormalization())(x)
+
+
+
+    x = TimeDistributed(Convolution2D(64,5,5,subsample = (3,3),init = 'uniform',activation = 'relu'))(x)
+    x = TimeDistributed(BatchNormalization())(x)
+
+    x = TimeDistributed(Convolution2D(256,3,3,subsample = (3,3),init = 'uniform',activation = 'relu'))(x)
+    x = TimeDistributed(BatchNormalization())(x)
+
+    x = TimeDistributed(Convolution2D(256,1,1,subsample = (1,1),init = 'uniform',activation = 'relu'))(x)
+    x = TimeDistributed(Convolution2D(128,1,1,subsample = (1,1),init = 'uniform',activation = 'relu'))(x)
+    x = TimeDistributed(Convolution2D(64,1,1,subsample = (1,1),init = 'uniform',activation = 'relu'))(x)
+    x = TimeDistributed(Convolution2D(32,1,1,subsample = (1,1),init = 'uniform',activation = 'relu'))(x)
+    x = TimeDistributed(Convolution2D(16,1,1,subsample = (1,1),init = 'uniform',activation = 'relu'))(x)
+    x = TimeDistributed(BatchNormalization())(x)
+    x = TimeDistributed(Flatten())(x)
+    model = Model(S,x)
+    model.summary()
+    return model,S,x
 
 if __name__ == '__main__':
     trained = load_model('encoder.h5')
@@ -81,5 +110,5 @@ if __name__ == '__main__':
     X = np.random.rand(1,64,64,1)
     res = model.predict(X)
     t_res = trained.predict(X)
-    print model.layers[1].get_weights()[0],trained.layers[1].get_weights()[0]
-    print 'match' if np.array_equal(model.layers[1].get_weights()[0],trained.layers[1].get_weights()[0]) else 'gg'
+#    print model.layers[1].get_weights()[0],trained.layers[1].get_weights()[0]
+#    print 'match' if np.array_equal(model.layers[1].get_weights()[0],trained.layers[1].get_weights()[0]) else 'gg'

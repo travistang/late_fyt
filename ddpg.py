@@ -11,32 +11,77 @@ from keras.engine.training import collect_trainable_weights
 import json
 
 from ReplayBuffer import ReplayBuffer
+from proportional import Experience
 from ActorNetwork import ActorNetwork
 from CriticNetwork import CriticNetwork
 from OU import OU
 import timeit
 import tensorflow as tf
 import cv2
-import matplotlib.pyplot as plt
 OU = OU()       #Ornstein-Uhlenbeck Process
 tf.python.control_flow_ops = tf
-plt.ion()
 colors = [np.random.uniform(0,1,(1,3)) for i in range(20)]
 def get_image(ob):
     img = ob[-1]
     vision = ob[-1]
     img = np.array(vision).reshape(64,64,3)
-    img = cv2.cvtColor(np.flipud(img).astype(np.float32),cv2.COLOR_BGR2GRAY)/255.0
-    return img.reshape((64,64,1))
-    #return img
+    img = np.flipud(img).astype(np.float32)/255.0 # normalized, colored image
+    #img = cv2.cvtColor(np.flipud(img).astype(np.float32),cv2.COLOR_BGR2GRAY)/255.0
+    return img
 
+def get_sample(sess,env,sample_size,buff):
+    history = []
+    for z in range(sample_size):
+        print "Gathering %d/%d sample..." % (z,sample_size)
+        act = np.random.normal(0,0.7,(1,1))
+        ob,r,done,_ = env.step(act)
+        img = get_image(ob)
+        history.append(img)
+        # stack histories to form states
+        if len(history) > 4:
+            s_t = np.concatenate(history[0:4],axis = -1)
+            s_t1 = np.concatenate(history[1:],axis = -1)
+            history = history[1:]
+            #buff.add((s_t,act,r,s_t1,done),1.)
+            buff.add(s_t,act,r,s_t1,done)
+        if done:
+            ob = env.reset()
+            history = []
+
+def train_critic(sess,critic,actor,buff):
+    nb_epoch = 50
+    batch_size = 16
+    for i in range(nb_epoch):
+        batch,weights,indices = buff.select(0)
+        #  extract things from batch
+        states = np.asarray([e[0] for e in batch])
+        actions = np.asarray([e[1] for e in batch])
+        rewards = np.asarray([e[2] for e in batch])
+        new_states = np.asarray([e[3] for e in batch])
+        dones = np.asarray([e[4] for e in batch])
+        y_t = np.asarray([e[1] for e in batch])
+        a = actor.target_model.predict(new_states)
+        #a = a.reshape(a.shape + (1,))
+        target_q_values = critic.target_model.predict([new_states, a])
+        for k in range(len(batch)):
+            if dones[k]:
+                y_t[k] = rewards[k]
+            else:
+                y_t[k] = rewards[k] + GAMMA*target_q_values[k]
+
+        loss += critic.model.train_on_batch([states,actions],y_t)
+        critic_prediction = critic.model.predict([states,actions],BATCH_SIZE)
+
+        loss_per_sample = sess.run(tf.abs(tf.subtract(critic_prediction, y_t))) # evaluating the loss of critics per sample
+        #buff.priority_update(indices,loss_per_sample) # because the priority is the absolute difference of the error
+    critic.target_train()
 def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
     BUFFER_SIZE = 100000
-    BATCH_SIZE = 32
+    BATCH_SIZE = 16
     GAMMA = 0.99
-    TAU = 0.1     #Target Network HyperParameters
-    LRA = 0.00001    #Learning rate for Actor
-    LRC = 0.00000001     #Lerning rate for Critic
+    TAU = 0.001     #Target Network HyperParameters
+    LRA = 0.  #Learning rate for Actor
+    LRC = 0.00001     #Lerning rate for Critic
 
     action_dim = 1  #Steering only!
     state_dim = 29  #of sensors input
@@ -45,14 +90,13 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
 
     vision = True
 
-    EXPLORE = 100000.
-    episode_count = 2000
-    max_steps = 500
+    EXPLORE = 10000.
+    episode_count = 20000
+    max_steps = 100000
     reward = 0
     done = False
     step = 0
     epsilon = 1
-    indicator = 0
     count = 0
     #Tensorflow GPU optimization
     config = tf.ConfigProto()
@@ -64,18 +108,39 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
 
     actor = ActorNetwork(sess, state_dim, action_dim, BATCH_SIZE, TAU, LRA)
     critic = CriticNetwork(sess, state_dim, action_dim, BATCH_SIZE, TAU, LRC)
-    buff = ReplayBuffer(BUFFER_SIZE)    #Create replay buffer
-
+    #buff = Experience(BUFFER_SIZE,BATCH_SIZE,0.6)    #Create replay buffer
+    buff = ReplayBuffer(BUFFER_SIZE)
+    # *************************************** summary section *************************************#
+    summaries = []
+    with tf.name_scope('reward'):
+        reward_ph = tf.placeholder(tf.float32)
+        s = tf.summary.scalar('average reward',reward_ph)
+        summaries.append(s)
+    with tf.name_scope('image_input'):
+        img_input = tf.placeholder(tf.float32,(1,64,64,3))
+        s = tf.summary.image('image_input',img_input)
+        summaries.append(s)
+    with tf.name_scope('estimated_q_value'):
+        q_loss = tf.placeholder(tf.float32)
+        estimate_q = tf.placeholder(tf.float32)
+        a_out = tf.placeholder(tf.float32)
+        sq = tf.summary.scalar('estimated Q value',estimate_q)
+        sl = tf.summary.scalar('Q loss', q_loss)
+        sa = tf.summary.scalar('Action', a_out)
+        summaries = summaries + [sl,sa]
+    writer = tf.summary.FileWriter('tmp/actor',graph = sess.graph)
+    summary_op = tf.summary.merge(summaries)
+    # ***************************************/summary section *************************************#
     # Generate a Torcs environment
     env = TorcsEnv(vision=vision, throttle=False,gear_change=False)
 
     #Now load the weight
     print("Now we load the weight")
     try:
-        actor.model.load_weights("actormodel.h5")
-        critic.model.load_weights("criticmodel.h5")
-        actor.target_model.load_weights("actormodel.h5")
-        critic.target_model.load_weights("criticmodel.h5")
+#        actor.model.load_weights("actormodel.h5")
+#        critic.model.load_weights("criticmodel.h5")
+#        actor.target_model.load_weights("actormodel.h5")
+#        critic.target_model.load_weights("criticmodel.h5")
         print("Weight load successfully")
     except:
         print("Cannot find the weight")
@@ -84,39 +149,16 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
     # random search to populate buffer
     ob = env.reset()
     #from encoder import get_encoder
-    #encoder = get_encoder()
     history = []
+    summary_history = []
     img_history = []
-    qs = []
-    sample_size = 40
-    for i in range(sample_size):
-        print "Gathering %d/%d sample..." % (i,sample_size)
-        act = np.random.normal(0,0.7,(1,))
-        ob,r,done,_ = env.step(act)
-        img = get_image(ob)
-        np.save('%d.npy' % i, img)
-        img_history.append(img)
-        history.append(img)
-        # stack histories to form states
-        if len(history) > 4:
-            s_t = np.stack(history[0:4])
-            s_t1 = np.stack(history[1:])
-            history = history[1:]
-            buff.add(s_t,act,r,s_t,done)
-        if done:
-            ob = env.reset()
-            history = []
+    sample_size = 100 # WARNING: at least  BATCH_SIZE
+    get_sample(sess,env,sample_size,buff)
+    #train_critic(sess,critic,buff)
     # train encoder and save the weights
-    #encoder.compile(optimizer = 'adam',nb_epoch = 20,batch_size = 16)
     for i in range(episode_count):
-        qs = []
-        '''
-        plot.set_xdata(range(len(qs)))
-                plot.set_ydata(qs)
-                plt.draw()
-        '''
         history = []
-        print("Episode : " + str(i) + " Replay Buffer " + str(buff.count()))
+        print("Episode : " + str(i) + " Replay Buffer " + str(buff.size()))
 
         if np.mod(i, 3) == 0:
             ob = env.reset(relaunch=True)   #relaunch TORCS every 3 episode because of the memory leak error
@@ -126,22 +168,18 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
         img = get_image(ob)
         [history.append(img) for k in range(4)] # populate the history
         #s_t = np.stack(history,axis = -1)
-        s_t = np.stack(history)
+        s_t = np.concatenate(history,axis = -1)
         total_reward = 0.
         for j in range(max_steps):
             loss = 0
             epsilon -= 1.0 / EXPLORE
             a_t = np.zeros([1,action_dim])
             noise_t = np.zeros([1,action_dim])
-            a_t_original = actor.model.predict(s_t.reshape((1,) + s_t.shape))
+            a_t_original = actor.target_model.predict(s_t.reshape((1,) + s_t.shape))
             # plotting stuff:
-            '''
-            for ind,norm in enumerate(actor.get_bias_norm()):
-                plt.scatter(count,norm,c = colors[ind])
-            '''
             count = count + 1
-            #plt.pause(0.005)
-            noise_t[0][0] = train_indicator * max(epsilon, 0) * OU.function(a_t_original[0][0],  0.0 , 0.60, 0.30)
+
+            #noise_t[0][0] = train_indicator * max(epsilon, 0) * OU.function(a_t_original[0][0],  0.0 , 0.60, 0.30)
 #            noise_t[0][1] = train_indicator * max(epsilon, 0) * OU.function(a_t_original[0][1],  0.5 , 1.00, 0.10)
 #            noise_t[0][2] = train_indicator * max(epsilon, 0) * OU.function(a_t_original[0][2], -0.1 , 1.00, 0.05)
 
@@ -149,51 +187,65 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
             #if random.random() <= 0.1:
             #    print("********Now we apply the brake***********")
             #    noise_t[0][2] = train_indicator * max(epsilon, 0) * OU.function(a_t_original[0][2],  0.2 , 1.00, 0.10)
-            # TODO: what if we sample actions randomly?
             a_t[0][0] = a_t_original[0][0] + noise_t[0][0]
 #            a_t[0][1] = a_t_original[0][1] + noise_t[0][1]
 #            a_t[0][2] = a_t_original[0][2] + noise_t[0][2]
 
             ob, r_t, done, info = env.step(a_t[0])
-
+            q = critic.model.predict([s_t.reshape((1,) + s_t.shape),a_t]).squeeze()
             #img = np.ndarray((64,64,3))
             img = get_image(ob)
             history.append(img)
             history = history[1:]
             #s_t1 = np.stack(history,axis = -1)
-            s_t1 = np.stack(history)
-            np.save("%d.npy" % count, img)
-            #buff.add(s_t, a_t[0], r_t, s_t1, done)      #Add replay buffer
-            buff.add(s_t,a_t,r_t,s_t1,done)
+            s_t1 = np.concatenate(history,axis = -1)
+            buff.add(s_t, a_t[0], r_t, s_t1, done)      #Add replay buffer
+#            p_t = 1.
+#            if buff.tree.filled_size() > 0:
+#                p_t = max([buff.tree.get_val(z) for z in range(buff.tree.filled_size())]) # assign the new tuple with the highest priority
+#            buff.add((s_t,a_t[0],r_t,s_t1,done), p_t)
+#            print('p_t',p_t)
             #Do the batch update
-            batch = buff.getBatchGreedy(BATCH_SIZE)
+            batch = buff.getBatch(BATCH_SIZE)
+            #batch,batch_weights,indices = buff.select(0.4) # beta = 0.4
             states = np.asarray([e[0] for e in batch])
             actions = np.asarray([e[1] for e in batch])
             rewards = np.asarray([e[2] for e in batch])
             new_states = np.asarray([e[3] for e in batch])
             dones = np.asarray([e[4] for e in batch])
             y_t = np.asarray([e[1] for e in batch])
-
-            target_q_values = critic.target_model.predict([new_states, actor.target_model.predict(new_states)])
-            qs.append(target_q_values[0])
+            print "shape of y_t: %s" % str(y_t.shape)
+            a,ls = actor.target_model.predict(new_states)
+            #a = a.reshape(a.shape + (1,))
+            target_q_values = critic.target_model.predict([ls, a])
             for k in range(len(batch)):
                 if dones[k]:
                     y_t[k] = rewards[k]
                 else:
                     y_t[k] = rewards[k] + GAMMA*target_q_values[k]
-
+            grads = 0
+            a_grad = 0
+            actor_summary = None
             if (train_indicator and len(history) >= 4):
-                loss += critic.model.train_on_batch([states,actions], y_t)
+                actions = actions.reshape(BATCH_SIZE,1)
+                y_t = y_t.reshape(BATCH_SIZE,1)
+                print "action shape: %s, y_t shape: %s" % (actions.shape,y_t.shape)
+                loss += critic.model.train_on_batch([states,actions],y_t)
+                #critic_prediction = critic.model.predict([states,actions],BATCH_SIZE)
+
+                #loss_per_sample = sess.run(tf.abs(tf.subtract(critic_prediction, y_t))) # evaluating the loss of critics per sample
+                #buff.priority_update(indices,loss_per_sample) # because the priority is the absolute difference of the error
                 a_for_grad = actor.model.predict(states)
-                grads = critic.gradients(states, a_for_grad)
-                actor.train(states, grads)
-                actor.target_train()
+                grads = critic.gradients(states, a_for_grad) # grads = grad_tc(Q)
+                #a_grad = actor.train(states, grads.reshape(BATCH_SIZE,1)) # a_grad = policy gradient
+                actor_summary = actor.log(states,grads)
+        #        actor.target_train()
                 critic.target_train()
 
             total_reward += r_t
             s_t = s_t1
-
-            print("Episode", i, "Step", step, "Action", a_t, "Reward", r_t, "Loss", loss)
+            # logging stuff
+            print("Episode", i, "Step", step, "act",a_t_original,"act_noise", a_t, "Loss", loss)
 
             step += 1
             if done:
@@ -215,6 +267,17 @@ def playGame(train_indicator=1):    #1 means Train, 0 means simply Run
         print("Total Step: " + str(step))
         print("")
 
+        # TODO: put all required values to feed_dict!
+        
+        summary = sess.run(summary_op,feed_dict = {
+            reward_ph: total_reward,
+            q_loss: loss,
+            estimate_q:q,
+            img_input: s_t[:,:,-3:].reshape(1,64,64,3),
+            a_out: a_t_original[0][0]
+        })
+        writer.add_summary(actor_summary)
+        writer.add_summary(summary)
     env.end()  # This is for shutting down TORCS
     print("Finish.")
 
