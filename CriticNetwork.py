@@ -45,7 +45,7 @@ class CriticNetwork(object):
     def create_critic_network(self, state_size,action_dim):
         print("Now we build the model")
         S = Input(shape=[state_size])  
-        A = Input(shape=[action_dim],name='action2')   
+        A = Input(shape=[1],name='action2')   
         w1 = Dense(HIDDEN1_UNITS, activation='relu')(S)
         a1 = Dense(HIDDEN2_UNITS, activation='linear')(A) 
         h1 = Dense(HIDDEN2_UNITS, activation='linear')(w1)
@@ -54,7 +54,7 @@ class CriticNetwork(object):
         V = Dense(action_dim,activation='linear')(h3)   
         model = Model(input=[S,A],output=V)
 
-        model.load_weights('criticmodel.h5')
+        #model.load_weights('criticmodel.h5')
 
         adam = Adam(lr=self.LEARNING_RATE)
         model.compile(loss='mse', optimizer=adam)

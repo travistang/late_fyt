@@ -85,7 +85,28 @@ class ActorNetwork(object):
     def create_actor_network(self, state_size,action_dim):
         print("Now we build the model")
         from keras.models import load_model
-        model = load_model('guide_model.h5')
+        temp = load_model('guide_model.h5')
+
+        S = Input(shape = (64,64,12))
+        x = Convolution2D(64,5,5,subsample = (3,3),init = 'uniform',activation = 'relu')(S)
+        x = BatchNormalization()(x)
+        x = Convolution2D(64,4,4,subsample = (2,2),init = 'uniform',activation = 'relu')(x)
+        x = BatchNormalization()(x)
+        x = Convolution2D(64,3,3,subsample = (1,1),init = 'uniform',activation = 'relu')(x)
+        x = BatchNormalization()(x)
+        x = Flatten()(x)
+        z = Dense(128,init = 'uniform',activation = 'relu',name = 'ls_1')(x)
+        ls = Dense(29,init = 'uniform',activation = 'relu',name = 'ls_2')(z)
+
+        y = Dense(128,init = 'uniform',activation = 'relu',name = 'act_1')(x)
+        Steering = Dense(1,activation = 'linear',init = 'uniform',name = 'act_2')(y)
+
+        model = Model(S,[Steering,ls])
         for l in model.layers:
             l.trainable = False
-        return model,model.trainable_weights,model.input
+        model.get_layer('act_1').trainable = True
+        model.get_layer('act_2').trainable = True 
+        adam = Adam(lr=self.LEARNING_RATE,decay = 1e-6)
+        model.compile(loss = 'mse',optimizer = adam)
+        model.set_weights(temp.get_weights())
+        return model,model.trainable_weights,S

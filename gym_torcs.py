@@ -296,13 +296,14 @@ if __name__ == '__main__':
     from ddpg import get_image
     img = get_image(ob)
     history = [img for i in range(4)]
-    max_step = 80000
+    max_step = 40000
     count = 0
-    for e in range(2000):
+    last_reward = 1
+    for e in range(1000):
         for i in range(max_step):
             c = env.get_client()
             S = c.S.d
-            a_t = ob[4] * 1.22
+            a_t = ob[4] * 1.23
             a_t -= ob[8] *.09
             if np.random.randint(4) == 2: # 1/4 of chance to add some noise
                 a_t += np.random.normal(0,0.3)
@@ -312,10 +313,15 @@ if __name__ == '__main__':
             np.save('training/s-%d.npy' % count,history)
             a_t = np.array(a_t).reshape(1,1)
             np.save('training/a-%d.npy' % count,a_t)
-            ob,reward, done,_ = env.step(a_t)
+            ob,reward, done,_ = env.step(a_t) 
             history.append(get_image(ob))
             history = history[1:]
             print("Step",i,"act",a_t)
             count = count + 1
             if done:
+                np.save('training/r-%d.npy' % count,reward)
                 env.reset()
+            else:
+                np.save('training/r-%d.npy' % count,reward + 0.99 * last_reward)
+                last_reward = reward
+
