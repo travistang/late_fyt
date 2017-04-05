@@ -8,7 +8,7 @@ from ddpg import get_image
 import keras.backend as K
 tf.python.control_flow_ops = tf
 K.set_learning_phase(0)
-def get_critic():
+def get_critic(weight_files = None,LRC = 0.001):
 
         HIDDEN1_UNITS = 300
         HIDDEN2_UNITS = 600
@@ -17,12 +17,15 @@ def get_critic():
         w1 = Dense(HIDDEN1_UNITS, activation='relu')(S)
         a1 = Dense(HIDDEN2_UNITS, activation='linear')(A)
         h1 = Dense(HIDDEN2_UNITS, activation='linear')(w1)
-        h2 = merge([h1,a1],mode='concat')
-        h3 = Dense(HIDDEN2_UNITS, activation='relu')(h2)
+        h2 = merge([h1,a1],mode='sum')
+        h3 = Dense(HIDDEN1_UNITS, activation='relu')(h2)
         V = Dense(1,activation='linear')(h3)
         model = Model(input=[S,A],output=V)
-        adam = Adam(lr = 0.000001,decay=1e-6)
+        adam = Adam(lr = LRC)
         model.compile(loss='mse', optimizer=adam)
+        if weight_files:
+            model.load_weights(weight_files)
+#        K.get_session().run([adam.beta_1.initializer,adam.beta_2.initializer])
         return model, A, S
 
 def get_action_trainable_weights(guide,isValue = False):
@@ -51,7 +54,7 @@ def apply_ddpg_gradients(guide,critic_out,critic_action_ph,critic_state_ph,sess,
 
 def add_noise(action):
     return action + np.random.randn(action.shape)
-def get_guide():
+def get_guide(weight_files = None):
         S = Input(shape = (64,64,12))
         x = Convolution2D(64,5,5,subsample = (3,3),init = 'uniform',activation = 'relu')(S)
         x = BatchNormalization()(x)
@@ -68,8 +71,10 @@ def get_guide():
         #Steering = Dense(1,weights = [np.random.uniform(-1e-8,1e-8,(512,1)),np.zeros((1,))], name='Steering')(lrn4)
         model = Model(S,[Steering,ls])
         adam = Adam(lr=0.000001,decay = 1e-6)
+        K.get_session().run([adam.beta_1.initializer,adam.beta_2.initializer])
         model.compile(loss='mse', optimizer=adam)
-        model.summary()
+        if weight_files:
+            model.load_weights(weight_files)
         return model, model.trainable_weights, S
 def test(guide_name = None):
     from os.path import isdir
@@ -166,7 +171,7 @@ def train_critic(critic = None):
     summary_op = tf.summary.merge_all()
     writer = tf.summary.FileWriter('tmp/critic',graph = sess.graph)
     names = [('training/ls-%d.npy' % i,'training/a-%d.npy' % i,'training/r-%d.npy' % i) for i in range(99000)]
-    vals = sample(names,20000)
+    vals = sample(names,10000)
     names = [n for n in names if n not in vals]
      
     def gen_sample(names):
@@ -261,7 +266,7 @@ def esp_process(a_t,esp):
 ####
 # return the weights of a trained critic based on the examples
 ####
-def bp_critic(actor,critic,toy_critic,buff,sample_size = 16,gamma = 0.99):
+def bp_critic(actor,critic,toy_critic,buff,dq_da_op,sample_size = 16,gamma = 0.99):
     #0: get batch from buffer
     batch = buff.getBatch(sample_size)
     #1: extract data from batch
@@ -284,26 +289,23 @@ def bp_critic(actor,critic,toy_critic,buff,sample_size = 16,gamma = 0.99):
  
     #4. get dq/da
     sess = K.get_session()
-    S,A = toy_critic.input
-    Q = toy_critic.output
-    dq_da = tf.gradients(Q,A)
-    grad = [sess.run(dq_da,feed_dict = {S: s_t[i].reshape((1,) + s_t[i].shape),A: a_t[i].reshape((1,) + a_t[i].shape)}) for i in range(sample_size)]
+#    S,A = toy_critic.input
+#    Q = toy_critic.output
+#    dq_da = tf.gradients(Q,A)
+    grad = [sess.run(dq_da_op,feed_dict = {S: s_t[i].reshape((1,) + s_t[i].shape),A: a_t[i].reshape((1,) + a_t[i].shape)}) for i in range(sample_size)]
     # finally,return everything
     return toy_critic.get_weights(),grad,a_t,img_s_t,loss
 
-def bp_actor(toy_actor,dq_da,a_t,s_t,optimizer):
-    # compute da/dw: derivative of output actions w.r.t. to the weights involved.
-    # TODO: debug me
-    weights = get_action_trainable_weights(toy_actor)
+def bp_actor(toy_actor,dq_da,a_t,s_t,ag,dq_da_ph):
+#    weights = get_action_trainable_weights(toy_actor)
     dq_da = np.array(dq_da).reshape(len(dq_da),1)
-
-    da_dw = tf.gradients(toy_actor.output[0],weights,-dq_da)
-    grads = zip(da_dw,weights)
-    ag = optimizer.apply_gradients(grads)
-    mag = [tf.norm(da) for da in da_dw]
+#    mag = [tf.norm(da) for da in da_dw]
     sess = K.get_session()
-    sess.run(tf.global_variables_initializer())
-    sess.run(ag,feed_dict = {toy_actor.input: s_t,toy_actor.output[0]: a_t})
+    sess.run(ag,feed_dict = {
+        toy_actor.input: s_t,
+        toy_actor.output[0]: a_t,
+        dq_da_ph: dq_da
+    })
 
 def update_critic(critic,weights,tau):
     org_weights = critic.get_weights()
@@ -320,28 +322,46 @@ def update_actor(actor,weights,tau):
     actor.get_layer('act_2').set_weights(map(np.array,org_weights[2:4]))
 
     
-def reinforce(guide,critic):
+def reinforce(guide,toy_actor,critic,toy_critic):
     from gym_torcs import TorcsEnv
     from ReplayBuffer import ReplayBuffer
-    
+
+    # logging variables
+    with tf.name_scope('ddpg'):
+        reward_ph = tf.placeholder(tf.float32,())
+        reward_sum= tf.summary.scalar('reward',reward_ph)
+    summary_op = tf.summary.merge_all()
+    logger = tf.summary.FileWriter('tmp/reinforce',graph = K.get_session().graph)
+    # env variables
     env = TorcsEnv(vision = True,throttle = False,gear_change = False)
     buff = ReplayBuffer(100000)
-    esp = 0.
+    esp = 1.
     tau = 0.001
     gamma = 0.99
+    LRA = 0.000000001
+    LRC = 0.0001
     ob = env.reset()
-    toy_critic,CA,CS = get_critic()
-    toy_critic.set_weights(critic.get_weights())
-    toy_actor,AW,AS = get_guide()
-    toy_actor.set_weights(guide.get_weights())
+
+    #bp_critic common variables
+    S,A = toy_critic.input
+    Q = toy_critic.output
+    dq_da_op = tf.gradients(Q,A)
+    #bp_actor common variables: ddpg
+    # get weights variables as actor
+    actor_weights = get_action_trainable_weights(toy_actor)
+    # prepare placeholders for two 
+    dq_da_ph = tf.placeholder(tf.float32,shape = (16,1)) # action dim + (1,)
+    da_dw = tf.gradients(toy_actor.output[0],actor_weights,-dq_da_ph)
+    # apply gradients to actor weights
+    grads = zip(da_dw,actor_weights)
+    ag = tf.train.AdamOptimizer(LRA).apply_gradients(grads)
+    initialize_optimizer_variables()
 
     # ddpg computation with tf optimizer
-    optimizer = tf.train.AdamOptimizer(0.00001)
-
     ################################ main loop #########################
     for epoch in range(10000):
         history = [get_image(ob) for i in range(4)]
-        total_reward = 0
+        total_reward = 0.
         for step in range(10000):
             img_states,low_states,history = get_states(ob,history)
             a_t,pls_t = guide.predict(img_states.reshape((1,) + img_states.shape))
@@ -357,31 +377,37 @@ def reinforce(guide,critic):
 
             if buff.num_experiences < 16: continue
             #train critic
-            critic_weights,dq_da,batch_a_t,batch_img_s_t,loss = bp_critic(guide,critic,toy_critic,buff,16,gamma)
+            critic_weights,dq_da,batch_a_t,batch_img_s_t,loss = bp_critic(guide,critic,toy_critic,buff,dq_da_op,16,gamma)
             #train actor
-            #TODO: me
-            bp_actor(toy_actor,dq_da,batch_a_t,batch_img_s_t,optimizer)
+            bp_actor(toy_actor,dq_da,batch_a_t,batch_img_s_t,ag,dq_da_ph)
 
             # extract weights of the toy actor for actor weight updating
             actor_weights = get_action_trainable_weights(toy_actor,True)
 
             #update critic and actor
-#            update_critic(critic,critic_weights,tau)
-#            #TODO: me
-#            update_actor(guide,actor_weights,tau)
+            update_critic(critic,critic_weights,tau)
+            update_actor(guide,actor_weights,tau)
+
             print 'epoch %d, step %d' % (epoch,step)
             if done:
                 ob = env.reset(relaunch = (epoch % 3 == 0))
                 break
-        print 'epoch:%d, reward: %d' % (epoch,total_reward)
+        print 'epoch:%d, reward: %f' % (epoch,total_reward)
+        # logging
+        summary = K.get_session().run(summary_op,feed_dict = {reward_ph: total_reward})
+        logger.add_summary(summary)
 
+def initialize_optimizer_variables():
+    opt_vars = [v for v in tf.global_variables() if 'beta' in v.name or 'Adam' in v.name]
+    K.get_session().run(tf.variables_initializer(opt_vars))
 
 if __name__ == '__main__':
-    org_guide = load_model('guide_model.h5')
-    guide,weights,S = get_guide()
-    guide.set_weights(org_guide.get_weights())
-    critic = load_model('guide_critic.h5')
-    reinforce(guide,critic)
+    guide,weights,S = get_guide('actor_weights.h5')
+    toy_guide,weights,S = get_guide('actor_weights.h5')
+    critic,A,S = get_critic('critic_weights.h5')
+    toy_critic,A,S = get_critic('critic_weights.h5')
+    # logger creation and config
+    reinforce(guide,toy_guide,critic,toy_critic)
 
     #train_critic(None)
     #test('guide_model.h5')
