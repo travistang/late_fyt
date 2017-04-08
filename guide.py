@@ -1,3 +1,4 @@
+from os.path import isfile
 from keras.models import *
 from keras.layers import *
 from keras.callbacks import *
@@ -48,13 +49,13 @@ def get_guide(weight_files = None):
         x = Convolution2D(32,4,4,subsample = (2,2),activation = 'relu')(x)
         x = BatchNormalization()(x)
         x = Flatten()(x)
-        z = Dense(128,init = 'uniform',activation = 'relu',name = 'ls_1',trainable = False)(x)
-        ls = Dense(29,init = 'uniform',activation = 'relu',name = 'ls_2',trainable = False)(z)
+#        z = Dense(128,init = 'uniform',activation = 'relu',name = 'ls_1',trainable = False)(x)
+#        ls = Dense(29,init = 'uniform',activation = 'relu',name = 'ls_2',trainable = False)(z)
 
         y = Dense(300,init = 'uniform',activation = 'relu',name = 'act_1')(x)
         Steering = Dense(1,activation = 'linear',init = 'uniform',name = 'act_2')(y)
         #Steering = Dense(1,weights = [np.random.uniform(-1e-8,1e-8,(512,1)),np.zeros((1,))], name='Steering')(lrn4)
-        model = Model(S,[Steering,ls])
+        model = Model(S,Steering)
         adam = Adam(lr=0.0001,decay = 1e-6)
         K.get_session().run([adam.beta_1.initializer,adam.beta_2.initializer])
         model.compile(loss='mse', optimizer=adam)
@@ -97,7 +98,7 @@ def test(guide_weight):
     for epoch in range(num_episode):
         while True:
             s_t = np.concatenate(history,axis = -1)
-            a_t,ls_t = guide.predict(s_t.reshape((1,) + s_t.shape))
+            a_t = guide.predict(s_t.reshape((1,) + s_t.shape))
             ob,reward,done,_ = env.step(a_t)
             history.append(get_image(ob))
             history = history[1:]
@@ -125,7 +126,7 @@ def prepare_training_data(npys):
     X = np.stack(imgs)
     y = np.array(y)
     z = np.array(z)
-    return X,[y,z]
+    return X,y
 
 def train_critic(critic = None):
     from os import listdir
@@ -165,7 +166,7 @@ def train_critic(critic = None):
     critic.fit_generator(gen_sample(names),4,3000,gen_sample(vals),callbacks = [reduce_lr,tensorboard_callback])
     
     critic.save('guide_critic.h5')
-def train_guide(guide = None):
+def train_guide(guide = None,weight_name = None):
     from os import listdir
     from os.path import isfile
     from random import sample
@@ -182,7 +183,7 @@ def train_guide(guide = None):
         action_s = tf.summary.scalar('guided_actor_action',action_ph)
     summary_op = tf.summary.merge_all()
     writer = tf.summary.FileWriter('tmp/guide',graph = sess.graph)
-    names = [('training/s-%d.npy' % i,'training/a-%d.npy' % i,'training/ls-%d.npy' % i) for i in range(100000)]
+    names = [('training/s-%d.npy' % i,'training/a-%d.npy' % i,'training/ls-%d.npy' % i) for i in range(100000) if isfile('training/s-%d.npy' % i)]
     vals = sample(names,20000)
     names = [n for n in names if n not in vals]
 
@@ -203,13 +204,13 @@ def train_guide(guide = None):
         X,y = prepare_training_data(batches)
         for x in X:
             x = x.reshape((1,) + x.shape)
-            acts.append(guide.predict(x)[0][0])
+            acts.append(guide.predict(x)[0])
 
 #            a_summary = sess.run(action_s,feed_dict = {action_ph:act[0].squeeze()})
 #            writer.add_summary(a_summary)
 
         # ...and write the summary to TensorBoard
-        s = sess.run(summary_op,feed_dict = {loss_ph: loss[1],loss_ls_ph: loss[2],action_ph:np.average(acts)})
+        s = sess.run(summary_op,feed_dict = {loss_ph: loss})
         writer.add_summary(s)
         # validation
         if epoch % 100 == 0:
@@ -220,6 +221,9 @@ def train_guide(guide = None):
             print("validation loss",val_loss)
         print ("epoch",epoch,"loss",loss)
     guide.save('guide_model.h5')
+    if weight_name:
+        guide.save_weights(weight_name)
+
 '''
     Util functions for the reinforcement learning loop
 '''
@@ -240,7 +244,7 @@ def esp_process(ob,a_t,esp):
     esp = 0. if esp < 0 else 1. if esp > 1. else esp # clamp epsilon
     ran = np.random.binomial(2,esp)
     should_not_guide = (ran == 0)
-    should_random = (ran == 2) 
+    should_random = (ran == 2)
     return (a_t + np.random.normal(0,0.2),True) if should_random else (a_t,False) if should_not_guide else (guided_action(ob),None) # None for guided
 
 ####
@@ -258,7 +262,8 @@ def bp_critic(actor,critic,toy_critic,buff,dq_da_op,sample_size = 16,gamma = 0.9
     dones = np.array(map(lambda e: e[4],batch))
     r = np.array(map(lambda e: e[2],batch))
     #2: form training data
-    a_t1,ls_1 =  actor.predict(img_s_t1)
+    #a_t1,ls_1 =  actor.predict(img_s_t1)
+    a_t1 = actor.predict(img_s_t1)
     a_t1 = np.array(a_t1)
 
     q_t1 = critic.predict([s_t1,a_t1])
@@ -379,8 +384,8 @@ def reinforce(guide,toy_actor,critic,toy_critic):
         ################### start looping ###############################
         for step in range(10000):
             img_states,low_states,history = get_states(ob,history)
-            a_t,pls_t = guide.predict(img_states.reshape((1,) + img_states.shape))
-
+            a_t = guide.predict(img_states.reshape((1,) + img_states.shape))
+            
             # get exploration propability and apply e-greedy
             action_esp = get_esp(step)
             a_t,is_random= esp_process(ob,a_t,action_esp)
@@ -433,7 +438,7 @@ def test_critic(weight_file):
     guide,a,b = get_guide(weight_file)
 
 if __name__ == '__main__':
-#    guide,weights,S = get_guide('guided_actor_weights_trained.h5')
+    guide,weights,S = get_guide()
 #    toy_guide,weights,S = get_guide('guided_actor_weights_trained.h5')
 #    critic,A,S = get_critic('guided_critic_weights_trained.h5')
 #    toy_critic,A,S = get_critic('guided_critic_weights_trained.h5')
@@ -441,4 +446,6 @@ if __name__ == '__main__':
 #    reinforce(guide,toy_guide,critic,toy_critic)
 #
     #train_critic(None)
-    test('guided_actor_weights_trained.h5')
+    K.get_session().run(tf.global_variables_initializer())
+    train_guide(guide,'guided_actor_pretrained_weights.h5')
+    #test('guided_actor_weights_trained.h5')
