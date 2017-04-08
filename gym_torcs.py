@@ -137,8 +137,8 @@ class TorcsEnv:
         damage = np.array(obs['damage'])
         rpm = np.array(obs['rpm'])
 
-        progress = np.exp(-10 * obs['trackPos'] ** 2)
-        #progress = sp*np.cos(obs['angle']) - np.abs(sp*np.sin(obs['angle'])) - sp * np.abs(obs['trackPos'])
+        #progress = np.exp(-10 * obs['trackPos'] ** 2)
+        progress = sp*np.cos(obs['angle']) - np.abs(sp*np.sin(obs['angle'])) - sp * np.abs(obs['trackPos'])
         #progress = -4./( 1 + np.exp(-(obs['trackPos']** 2))) + 3
         reward = progress
 
@@ -151,12 +151,11 @@ class TorcsEnv:
 
         # Termination judgement #########################
         episode_terminate = False
-        '''
-        if (abs(track.any()) > 1 or abs(trackPos) > 1):  # Episode is terminated if the car is out of track
-            reward = -200
+
+        if (abs(trackPos) > 1.1):  # Episode is terminated if the car is out of track
+            reward = -20
             episode_terminate = True
             client.R.d['meta'] = True
-        '''
         '''
         if self.terminal_judge_start < self.time_step: # Episode terminates if the progress of agent is small
             if progress < self.termination_limit_progress:
