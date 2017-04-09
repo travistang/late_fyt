@@ -9,6 +9,7 @@ from proportional import Experience
 from encoder import get_pretrained_encoder
 from ddpg import get_image
 import keras.backend as K
+from collections import deque
 tf.python.control_flow_ops = tf
 K.set_learning_phase(0)
 def get_critic(weight_files = None,LRC = 0.001):
@@ -42,21 +43,21 @@ def add_noise(action):
     return action + np.random.randn(action.shape)
 def get_guide(weight_files = None):
         S = Input(shape = (64,64,12))
-        x = Convolution2D(16,8,8,subsample = (4,4),activation = 'relu')(S)
+        x = Convolution2D(32,8,8,subsample = (4,4),activation = 'relu')(S)
         x = BatchNormalization()(x)
         x = Convolution2D(32,4,4,subsample = (2,2),activation = 'relu')(x)
         x = BatchNormalization()(x)
-        x = Convolution2D(32,4,4,subsample = (2,2),activation = 'relu')(x)
+        x = Convolution2D(64,4,4,subsample = (2,2),activation = 'relu')(x)
         x = BatchNormalization()(x)
         x = Flatten()(x)
 #        z = Dense(128,init = 'uniform',activation = 'relu',name = 'ls_1',trainable = False)(x)
 #        ls = Dense(29,init = 'uniform',activation = 'relu',name = 'ls_2',trainable = False)(z)
 
-        y = Dense(300,init = 'uniform',activation = 'relu',name = 'act_1')(x)
-        Steering = Dense(1,activation = 'linear',init = 'uniform',name = 'act_2')(y)
+        y = Dense(300,activation = 'relu',name = 'act_1')(x)
+        Steering = Dense(1,activation = 'linear',name = 'act_2')(y)
         #Steering = Dense(1,weights = [np.random.uniform(-1e-8,1e-8,(512,1)),np.zeros((1,))], name='Steering')(lrn4)
         model = Model(S,Steering)
-        adam = Adam(lr=0.0001,decay = 1e-6)
+        adam = Adam(lr=0.00000001,decay = 1e-6)
         K.get_session().run([adam.beta_1.initializer,adam.beta_2.initializer])
         model.compile(loss='mse', optimizer=adam)
         if weight_files:
@@ -175,12 +176,12 @@ def train_guide(guide = None,weight_name = None):
     sess = tf.Session()
     with tf.name_scope('guide_loss'):
         loss_ph = tf.placeholder(tf.float32)
-        loss_ls_ph = tf.placeholder(tf.float32)
+        #loss_ls_ph = tf.placeholder(tf.float32)
         loss_s = tf.summary.scalar('guide_steering_loss',loss_ph)
-        loss_ls = tf.summary.scalar('guide_low_dim_loss',loss_ls_ph)
-    with tf.name_scope('guided_actor'):
-        action_ph = tf.placeholder(tf.float32)
-        action_s = tf.summary.scalar('guided_actor_action',action_ph)
+        #loss_ls = tf.summary.scalar('guide_low_dim_loss',loss_ls_ph)
+#    with tf.name_scope('guided_actor'):
+#        action_ph = tf.placeholder(tf.float32)
+#        action_s = tf.summary.scalar('guided_actor_action',action_ph)
     summary_op = tf.summary.merge_all()
     writer = tf.summary.FileWriter('tmp/guide',graph = sess.graph)
     names = [('training/s-%d.npy' % i,'training/a-%d.npy' % i,'training/ls-%d.npy' % i) for i in range(100000) if isfile('training/s-%d.npy' % i)]
@@ -206,9 +207,6 @@ def train_guide(guide = None,weight_name = None):
             x = x.reshape((1,) + x.shape)
             acts.append(guide.predict(x)[0])
 
-#            a_summary = sess.run(action_s,feed_dict = {action_ph:act[0].squeeze()})
-#            writer.add_summary(a_summary)
-
         # ...and write the summary to TensorBoard
         s = sess.run(summary_op,feed_dict = {loss_ph: loss})
         writer.add_summary(s)
@@ -228,14 +226,15 @@ def train_guide(guide = None,weight_name = None):
     Util functions for the reinforcement learning loop
 '''
 def get_states(ob,history):
+    img_states = np.concatenate(history,axis = -1)
+
     img = get_image(ob)
     history.append(img)
-    history = history[1:]
-
-    img_states = np.concatenate(history,axis = -1)
+    history.popleft()
+    
     #img_states = img_states.reshape((1,) + img_states.shape)
     l_s = np.hstack((ob.angle, ob.track, ob.trackPos, ob.speedX, ob.speedY, ob.speedZ, ob.wheelSpinVel/100.0, ob.rpm))
-    return img_states,l_s,history
+    return img_states,l_s
 def guided_action(ob):
     res = ob[4] * 3
     res -= ob[8] * .09
@@ -252,7 +251,7 @@ def esp_process(ob,a_t,esp):
 ####
 def bp_critic(actor,critic,toy_critic,buff,dq_da_op,sample_size = 16,gamma = 0.99,loss_ph = None,grad_summary = None):
     #0: get batch from buffer
-    batch = buff.getBatchPrioritized(sample_size)
+    batch = buff.getBatchMixed(sample_size)
     #1: extract data from batch
     img_s_t = np.array(map(lambda e: e[0][0],batch))
     s_t = np.array(map(lambda e: e[0][1],batch))
@@ -285,10 +284,11 @@ def bp_actor(toy_actor,dq_da,a_t,s_t,ag,dq_da_ph):
 #    weights = get_action_trainable_weights(toy_actor)
     dq_da = np.array(dq_da).reshape(16,1)
 #    mag = [tf.norm(da) for da in da_dw]
+    print dq_da,dq_da.shape
     sess = K.get_session()
     sess.run(ag,feed_dict = {
         toy_actor.input: s_t,
-        toy_actor.output[0]: a_t,
+        toy_actor.output: a_t,
         dq_da_ph: dq_da
     })
 
@@ -298,7 +298,6 @@ def update_critic(critic,weights,tau):
         org_weights[i] = tau * weight + (1 - tau) * org_weights[i]
     critic.set_weights(org_weights)
 
-# TODO: test me
 def update_actor(actor,weights,tau):
     org_weights = actor.get_weights()
     for i,weight in enumerate(weights):
@@ -325,7 +324,7 @@ def reinforce(guide,toy_actor,critic,toy_critic):
     esp = 1.
     tau = 0.001
     gamma = 0.99
-    LRA = 0.00001
+    LRA = 0.000001
     LRC = 0.00001
     esp_window_size = 10
     ob = env.reset()
@@ -341,7 +340,7 @@ def reinforce(guide,toy_actor,critic,toy_critic):
     actor_weights = get_action_trainable_weights(toy_actor)
     # prepare placeholders for two 
     dq_da_ph = tf.placeholder(tf.float32,shape = (16,1)) # action dim + (1,)
-    da_dw = tf.gradients(toy_actor.output[0],actor_weights,-dq_da_ph,name = 'da_dw')
+    da_dw = tf.gradients(toy_actor.output,actor_weights,-dq_da_ph,name = 'da_dw')
     # apply gradients to actor weights
     grads = zip(da_dw,actor_weights)
     ag = tf.train.AdamOptimizer(LRA).apply_gradients(grads)
@@ -369,7 +368,7 @@ def reinforce(guide,toy_actor,critic,toy_critic):
     for epoch in range(10000):
         #################### epoch start: preprocessing ################
         # history preparation, variable initialization, exploration planning
-        history = [get_image(ob) for i in range(4)]
+        history = deque([get_image(ob) for i in range(4)])
         total_reward = 0.
         last_s_avg = 200.0
         a = 0.001
@@ -383,9 +382,10 @@ def reinforce(guide,toy_actor,critic,toy_critic):
         get_esp = lambda s: a * np.exp((s / s_avg) ** c * np.log(b/a)) if s < s_avg else b
         ################### start looping ###############################
         for step in range(10000):
-            img_states,low_states,history = get_states(ob,history)
+            img_states,low_states = get_states(ob,history)
             a_t = guide.predict(img_states.reshape((1,) + img_states.shape))
             
+            np.save('s-%d-%d.npy' % (epoch,step),np.concatenate(history,axis = -1))
             # get exploration propability and apply e-greedy
             action_esp = get_esp(step)
             a_t,is_random= esp_process(ob,a_t,action_esp)
@@ -393,7 +393,7 @@ def reinforce(guide,toy_actor,critic,toy_critic):
             # step and get observation
             ob,reward,done,_ = env.step(a_t[0])
             total_reward += reward
-            img_states_1, low_states_1,history = get_states(ob,history)
+            img_states_1, low_states_1 = get_states(ob,history)
             # add this experience to buffer
             buff.add((img_states,low_states),a_t[0],reward,(img_states_1,low_states_1),done,step)
 
@@ -439,13 +439,13 @@ def test_critic(weight_file):
 
 if __name__ == '__main__':
     guide,weights,S = get_guide()
-#    toy_guide,weights,S = get_guide('guided_actor_weights_trained.h5')
-#    critic,A,S = get_critic('guided_critic_weights_trained.h5')
-#    toy_critic,A,S = get_critic('guided_critic_weights_trained.h5')
+    toy_guide,weights,S = get_guide()
+    critic,A,S = get_critic()
+    toy_critic,A,S = get_critic()
 #    # logger creation and config
-#    reinforce(guide,toy_guide,critic,toy_critic)
+    reinforce(guide,toy_guide,critic,toy_critic)
 #
     #train_critic(None)
-    K.get_session().run(tf.global_variables_initializer())
-    train_guide(guide,'guided_actor_pretrained_weights.h5')
+#    K.get_session().run(tf.global_variables_initializer())
+#    train_guide(guide)
     #test('guided_actor_weights_trained.h5')

@@ -17,6 +17,12 @@ class ReplayBuffer(object):
         else:
             return random.sample(self.buffer, batch_size)
     
+    def getBatchMixed(self,batch_size):
+        if self.num_experiences < batch_size:
+            return random.sample(self.buffer,self.num_experiences)
+        else:
+            return self.getBatchPrioritized(batch_size / 2) + self.getBatchGreedy(batch_size / 2)
+
     def getBatchPrioritized(self,batch_size):
         if self.num_experiences < batch_size:
             return random.sample(self.buffer,self.num_experiences)
